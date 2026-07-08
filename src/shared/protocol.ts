@@ -1,10 +1,12 @@
-import type { CaptureType, PageReadyPayload, RawCapture } from './types';
+import type { CaptureStateResponse, CaptureType, PageReadyPayload, RawCapture } from './types';
 
 // 消息类型常量（按职责区分，不再绑定具体数据类型）。
 export const BRIDGE_READY = 'DY_CAPTURE_BRIDGE_READY';
 export const PAGE_READY = 'DY_CAPTURE_PAGE_READY';
 export const REPORT_CAPTURE = 'DY_CAPTURE_REPORT_CAPTURE';
 export const GET_TAB_CAPTURE = 'DY_CAPTURE_GET_TAB_CAPTURE';
+// Popup 一次性查询当前 tab 下所有数据类型的捕获状态（用于自动匹配的"已抓数据兜底"与下拉展示）。
+export const GET_ALL_TAB_CAPTURE = 'DY_CAPTURE_GET_ALL_TAB_CAPTURE';
 
 // bridge 安装完成后通知 background，Popup 据此判断是否需要兜底注入脚本。
 export interface BridgeReadyMessage {
@@ -65,4 +67,34 @@ export function isGetTabCapture (value: unknown): value is GetTabCaptureMessage 
 
     const message = value as Partial<GetTabCaptureMessage>;
     return message.type === GET_TAB_CAPTURE && typeof message.tabId === 'number' && typeof message.captureType === 'string';
+}
+
+// Popup 一次性查询所有数据类型的请求。
+export interface GetAllTabCaptureMessage {
+    type: typeof GET_ALL_TAB_CAPTURE;
+    tabId: number;
+}
+
+// 单个数据类型在 Popup 下拉里展示的捕获状态。
+export interface FeatureCaptureState {
+    id: CaptureType;
+    displayName: string;
+    state: CaptureStateResponse;
+}
+
+// 返回给 Popup 的全部数据类型捕获状态。
+export interface GetAllTabCaptureResponse {
+    ok: boolean;
+    features: FeatureCaptureState[];
+    error?: string;
+}
+
+// Popup 发来的全量查询请求。
+export function isGetAllTabCapture (value: unknown): value is GetAllTabCaptureMessage {
+    if (!value || typeof value !== 'object') {
+        return false;
+    }
+
+    const message = value as Partial<GetAllTabCaptureMessage>;
+    return message.type === GET_ALL_TAB_CAPTURE && typeof message.tabId === 'number';
 }

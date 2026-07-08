@@ -1,10 +1,15 @@
 import { browser } from 'wxt/browser';
 import {
     BRIDGE_READY,
+    GET_ALL_TAB_CAPTURE,
     GET_TAB_CAPTURE,
     REPORT_CAPTURE,
+    type GetAllTabCaptureMessage,
+    type GetAllTabCaptureResponse,
+    type FeatureCaptureState,
     type GetTabCaptureMessage,
     isBridgeReady,
+    isGetAllTabCapture,
     isGetTabCapture,
     isPageReady,
     isReportCapture
@@ -24,15 +29,10 @@ import type {
     RawCapture,
     RequestSeen
 } from '../src/shared/types';
-import { shopRankFeature, type CaptureFeature } from '../src/features/shop-rank';
+import { FEATURES, findFeatureById, findFeatureByApiUrl, getContentScriptMatches, type CaptureFeature } from '../src/features';
 
-// 当前支持的数据类型列表。新增数据类型时，把对应的 feature 加进来即可，核心逻辑不用改。
-const FEATURES: CaptureFeature[] = [shopRankFeature];
-
-// 根据请求 URL 找到匹配的数据类型（用于 webRequest 重取与分页）。
-function findFeatureByUrl (url: string): CaptureFeature | undefined {
-    return FEATURES.find(feature => feature.matchUrl(url));
-}
+// FEATURES / findFeatureByApiUrl / getContentScriptMatches 都来自统一注册表 src/features，
+// 新增数据类型时只改注册表，background 核心逻辑不用动。
 
 export default defineBackground(() => {
     // MV3 的 service worker 空闲时会被系统回收，内存里的捕获会随之丢失。
@@ -71,6 +71,11 @@ export default defineBackground(() => {
             return handleGetTabCapture(message);
         }
 
+        // GET_ALL_TAB 来自 Popup，一次查询当前 tab 下所有数据类型的捕获状态。
+        if (isGetAllTabCapture(message)) {
+            return handleGetAllTabCapture(message);
+        }
+
         return undefined;
     });
 
@@ -85,7 +90,7 @@ export default defineBackground(() => {
                 return;
             }
 
-            const feature = findFeatureByUrl(details.url);
+            const feature = findFeatureByApiUrl(details.url);
 
             if (!feature) {
                 return;
@@ -226,9 +231,10 @@ export default defineBackground(() => {
     }
 
     // 标签页关闭时清理对应缓存，避免 storage.session 堆积无用数据。
+    // 每种数据类型各有一份捕获，按 FEATURES 全部清理。
     browser.tabs.onRemoved.addListener(tabId => {
         void browser.storage.session.remove([
-            captureKeyFor(shopRankFeature.id, tabId),
+            ...FEATURES.map(feature => captureKeyFor(feature.id, tabId)),
             readyKey(tabId),
             pageReadyKeyFor(tabId),
             requestSeenKeyFor(tabId),
@@ -241,7 +247,7 @@ export default defineBackground(() => {
     browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
         if (changeInfo.status === 'loading') {
             void browser.storage.session.remove([
-                captureKeyFor(shopRankFeature.id, tabId),
+                ...FEATURES.map(feature => captureKeyFor(feature.id, tabId)),
                 readyKey(tabId),
                 pageReadyKeyFor(tabId),
                 requestSeenKeyFor(tabId),
@@ -250,15 +256,8 @@ export default defineBackground(() => {
         }
     });
 
-    async function handleGetTabCapture (message: GetTabCaptureMessage): Promise<CaptureStateResponse> {
-        const feature = FEATURES.find(f => f.id === message.captureType);
-
-        if (!feature) {
-            return { ok: false, capture: null, error: `未支持的数据类型：${message.captureType}` };
-        }
-
-        const tabId = message.tabId;
-
+    // 读取单个数据类型在当前 tab 的捕获状态，复用 buildCaptureState 保证解析行为一致。
+    async function buildFeatureState (feature: CaptureFeature, tabId: number): Promise<FeatureCaptureState> {
         // storage.session.get 返回的是按 key 名索引的对象，不是数组。
         const entry = await browser.storage.session.get([
             captureKeyFor(feature.id, tabId),
@@ -278,13 +277,35 @@ export default defineBackground(() => {
         const state = buildCaptureState(rawCapture ?? null, feature.parse);
 
         return {
-            ...state,
-            bridgeReady,
-            pageReady: Boolean(pageReadyPayload),
-            fetchPatched: pageReadyPayload?.fetchPatched,
-            xhrPatched: pageReadyPayload?.xhrPatched,
-            requestSeen: requestSeen ?? null,
-            captureProgress: captureProgress ?? null
+            id: feature.id,
+            displayName: feature.displayName,
+            state: {
+                ...state,
+                bridgeReady,
+                pageReady: Boolean(pageReadyPayload),
+                fetchPatched: pageReadyPayload?.fetchPatched,
+                xhrPatched: pageReadyPayload?.xhrPatched,
+                requestSeen: requestSeen ?? null,
+                captureProgress: captureProgress ?? null
+            }
         };
+    }
+
+    async function handleGetTabCapture (message: GetTabCaptureMessage): Promise<CaptureStateResponse> {
+        const feature = findFeatureById(message.captureType);
+
+        if (!feature) {
+            return { ok: false, capture: null, error: `未支持的数据类型：${message.captureType}` };
+        }
+
+        const result = await buildFeatureState(feature, message.tabId);
+        return result.state;
+    }
+
+    // 一次性返回当前 tab 下所有数据类型的捕获状态，供 Popup 自动匹配与下拉展示。
+    async function handleGetAllTabCapture (message: GetAllTabCaptureMessage): Promise<GetAllTabCaptureResponse> {
+        const features = await Promise.all(FEATURES.map(feature => buildFeatureState(feature, message.tabId)));
+
+        return { ok: true, features };
     }
 });

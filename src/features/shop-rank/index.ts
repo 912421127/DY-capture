@@ -13,6 +13,10 @@ export interface CaptureFeature {
     apiPath: string;
     // 判断某个请求 URL 是否属于本数据类型。
     matchUrl: (url: string) => boolean;
+    // 该数据类型所属域名（用于 content script 的注入范围与 Popup 的域名校验）。
+    hosts: string[];
+    // 判断某个「页面地址」是否属于本数据类型，Popup 据此自动匹配提取组件。
+    matchPageUrl: (url: string) => boolean;
     // 把原始响应解析成 CSV 行（映射 + 格式化）。
     parse: (rawResponse: unknown) => JsonRecord[] | null;
     // 根据捕获生成下载文件名。
@@ -25,12 +29,27 @@ export interface CaptureFeature {
     mergePages: (responses: unknown[]) => unknown;
 }
 
+// 店铺榜单所属域名，用于 content script 的注入范围与 Popup 的域名校验。
+const SHOP_RANK_HOSTS = ['compass.jinritemai.com'];
+
+// 按页面地址粗匹配：当前只有一个 feature，先按整个罗盘域名匹配；
+// 后续新增页面时再细化成具体的页面路径规则。
+function matchShopRankPage(url: string): boolean {
+    try {
+        return SHOP_RANK_HOSTS.includes(new URL(url).hostname);
+    } catch {
+        return false;
+    }
+}
+
 // 店铺榜单数据类型：把专属逻辑收敛到本模块，核心只认 CaptureFeature 接口。
 export const shopRankFeature: CaptureFeature = {
     id: 'shop_rank',
     displayName: '罗盘店铺榜单',
     apiPath: '/compass_api/shop/mall/market/shop_rank',
     matchUrl: isShopRankUrl,
+    hosts: SHOP_RANK_HOSTS,
+    matchPageUrl: matchShopRankPage,
     parse: parseCompassShopRankRecords,
     getFileName: getShopRankFileName,
     extractPageResult,

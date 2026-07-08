@@ -1,30 +1,42 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { browser } from 'wxt/browser';
 import { createCsvContent } from '../../src/shared/csv';
-import { GET_TAB_CAPTURE } from '../../src/shared/protocol';
+import { FEATURES, findFeatureByPageUrl } from '../../src/features';
+import {
+    GET_ALL_TAB_CAPTURE,
+    GET_TAB_CAPTURE,
+    type GetAllTabCaptureResponse
+} from '../../src/shared/protocol';
 import type { Capture, CaptureStateResponse, RequestSeen } from '../../src/shared/types';
-import { shopRankFeature } from '../../src/features/shop-rank';
 
 type NoticeType = 'success' | 'info' | 'warning' | 'error';
 
-const COMPASS_HOST = 'compass.jinritemai.com';
-// WXT 的 PublicPath 类型只校验带开头 / 的形式（见 .wxt/types/paths.d.ts），
-// Chrome 运行时对带不带 / 都能解析，这里沿用类型安全的写法。
-// 关键修复是 allFrames: true，让兜底注入覆盖所有 frame。
-const PAGE_SCRIPT_FILE = '/content-scripts/shop-rank-page.js';
+// 通用内容脚本产物路径，覆盖所有 feature，新增 feature 时无需新增脚本文件。
+const PAGE_SCRIPT_FILE = '/content-scripts/capture.js';
 
-// 当前弹窗对应的数据类型（后续加数据时可切换为其它 feature）。
-const captureType = shopRankFeature.id;
-// 给用户看的中文名称，用于提示文案。
-const dataTypeName = shopRankFeature.displayName;
+// 当前选中的数据类型（下拉框绑定）。打开弹窗时会按页面地址 / 已抓数据自动匹配。
+const selectedFeatureId = ref<string>(FEATURES[0].id);
+const selectedFeature = computed(() => FEATURES.find(f => f.id === selectedFeatureId.value)!);
+
+// 下拉框选项：来自统一注册表，新增 feature 自动出现。
+const featureOptions = computed(() => FEATURES.map(f => ({ label: f.displayName, value: f.id })));
+
+// 给用户看的中文名称，用于提示文案（随选中项变化）。
+const dataTypeName = computed(() => selectedFeature.value.displayName);
 
 const loading = ref(false);
 const capture = ref<Capture | null>(null);
 const noticeType = ref<NoticeType>('info');
-const noticeMessage = ref(`请先打开 ${dataTypeName} 页面，并刷新页面触发接口请求。`);
+const noticeMessage = ref(`请先打开 ${dataTypeName.value} 页面，并刷新页面触发接口请求。`);
 // 保留最近一次 background 返回的原始响应，供诊断面板展示，方便定位捕获失败原因。
 const lastResponse = ref<CaptureStateResponse | null>(null);
+// 诊断面板开关：默认关闭，用户主动展开查看技术细节。
+const showDebug = ref(false);
+// 自动轮询定时器：多页抓取进行中时，定时刷新状态展示。
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+// 轮询间隔（毫秒），兼顾实时性和对 background 的请求压力。
+const POLL_INTERVAL = 1500;
 
 const recordCount = computed(() => capture.value?.records.length ?? 0);
 const canDownload = computed(() => Boolean(capture.value && recordCount.value > 0));
@@ -38,9 +50,47 @@ const capturedTimeText = computed(() => {
 
 const requestSeenText = computed(() => formatRequestSeen(lastResponse.value?.requestSeen ?? null));
 
-onMounted(() => {
-  void loadLatestCapture();
+onMounted(async () => {
+  // 先按当前页面自动匹配提取组件，再加载对应捕获。
+  await autoSelectFeature();
+  await loadLatestCapture();
 });
+
+// popup 关闭或组件卸载时清除轮询，避免内存泄漏。
+onUnmounted(() => {
+  stopPolling();
+});
+
+// 下拉框切换：清空旧数据并重新加载新选中的数据类型。
+function onFeatureChange() {
+  capture.value = null;
+  lastResponse.value = null;
+  void loadLatestCapture();
+}
+
+// 自动匹配：先按当前标签页页面地址匹配；没命中再选「当前 tab 已抓到数据」的 feature；都没有则默认第一个。
+async function autoSelectFeature() {
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+
+  const matchedByPage = tab?.url ? findFeatureByPageUrl(tab.url) : undefined;
+
+  if (matchedByPage) {
+    selectedFeatureId.value = matchedByPage.id;
+    return;
+  }
+
+  if (tab?.id) {
+    const all = await requestAllCapture(tab.id);
+    const hit = all.features.find(f => f.state.hasRawCapture);
+
+    if (hit) {
+      selectedFeatureId.value = hit.id;
+      return;
+    }
+  }
+
+  selectedFeatureId.value = FEATURES[0].id;
+}
 
 async function loadLatestCapture() {
   loading.value = true;
@@ -52,35 +102,38 @@ async function loadLatestCapture() {
       throw new Error('没有找到当前活动标签页。');
     }
 
-    assertCompassTab(tab.url);
+    assertFeatureTab(tab.url);
 
     // 统一向 background 查询当前 tab、指定数据类型的捕获，不再直接问顶层 frame，
     // 避免 iframe / 微前端 frame 里的捕获拿不到。
     const response = await requestLatestCapture(tab.id);
     lastResponse.value = response;
 
-    // 多页获取进行中：显示进度，用户可以隔几秒刷新查看最新状态。
+    // 多页获取进行中：显示进度，并启动自动轮询刷新。
     if (response.captureProgress && response.captureProgress.status === 'fetching') {
       const { currentPage, totalPages } = response.captureProgress;
       noticeType.value = 'info';
       noticeMessage.value = `正在获取全部数据：第 ${currentPage}/${totalPages} 页...`;
+      startPolling();
       return;
     }
 
     if (response.hasRawCapture) {
       capture.value = response.capture;
+      stopPolling(); // 数据已就绪，停止轮询
       updateNoticeByResponse(response);
       return;
     }
 
     // 还没捕获到接口响应。先看脚本注入情况，再给针对性提示。
     capture.value = null;
+    stopPolling(); // 非抓取中状态，停止轮询
 
     if (!response.bridgeReady) {
       // 脚本还没注入（常见于先打开页面、后重载插件），这里兜底注入所有 frame。
       const frameCount = await ensureCaptureScriptsInjected(tab.id);
       noticeType.value = 'info';
-      noticeMessage.value = `已注入 ${frameCount} 个 frame，请刷新 ${dataTypeName} 页面或点击页面筛选触发接口后，再点刷新捕获。`;
+      noticeMessage.value = `已注入 ${frameCount} 个 frame，请刷新 ${dataTypeName.value} 页面或点击页面筛选触发接口后，再点刷新捕获。`;
       return;
     }
 
@@ -109,9 +162,10 @@ async function loadLatestCapture() {
 
     // 脚本就绪、fetch 已 patch，但还没看到请求，提示用户去触发接口。
     noticeType.value = 'info';
-    noticeMessage.value = `采集脚本已就绪，请刷新 ${dataTypeName} 页面或点击页面筛选按钮触发接口后，再点刷新捕获。`;
+    noticeMessage.value = `采集脚本已就绪，请刷新 ${dataTypeName.value} 页面或点击页面筛选按钮触发接口后，再点刷新捕获。`;
   } catch (error) {
     capture.value = null;
+    stopPolling(); // 出错时停止轮询
     noticeType.value = 'warning';
     noticeMessage.value = getFriendlyErrorMessage(error);
   } finally {
@@ -119,23 +173,57 @@ async function loadLatestCapture() {
   }
 }
 
-function assertCompassTab(url: string | undefined) {
+// 启动自动轮询：多页抓取进行中时，定时向 background 查询最新状态。
+function startPolling() {
+  stopPolling(); // 防止重复启动
+  pollTimer = setInterval(() => {
+    void loadLatestCapture();
+  }, POLL_INTERVAL);
+}
+
+// 停止轮询：数据就绪、出错或组件卸载时调用。
+function stopPolling() {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function assertFeatureTab(url: string | undefined) {
   if (!url) {
-    throw new Error('当前标签页地址不可读，请切到罗盘页面后再试。');
+    throw new Error('当前标签页地址不可读，请切到对应页面后再试。');
   }
 
-  const parsedUrl = new URL(url);
+  const host = new URL(url).hostname;
 
-  if (parsedUrl.hostname !== COMPASS_HOST) {
-    throw new Error('请先切到 compass.jinritemai.com 的罗盘页面，再点击刷新捕获。');
+  if (!selectedFeature.value.hosts.includes(host)) {
+    throw new Error(`请先切到 ${selectedFeature.value.hosts.join('/')} 的${dataTypeName.value}页面，再点击刷新捕获。`);
   }
 }
 
 async function requestLatestCapture(tabId: number): Promise<CaptureStateResponse> {
-  const response = await browser.runtime.sendMessage({ type: GET_TAB_CAPTURE, tabId, captureType }) as CaptureStateResponse | undefined;
+  const response = await browser.runtime.sendMessage({
+    type: GET_TAB_CAPTURE,
+    tabId,
+    captureType: selectedFeature.value.id
+  }) as CaptureStateResponse | undefined;
 
   if (!response?.ok) {
     throw new Error(response?.error || '当前页面还没有准备好。');
+  }
+
+  return response;
+}
+
+// 一次性拉取当前 tab 下所有数据类型的捕获状态，供自动匹配的「已抓数据兜底」使用。
+async function requestAllCapture(tabId: number): Promise<GetAllTabCaptureResponse> {
+  const response = await browser.runtime.sendMessage({
+    type: GET_ALL_TAB_CAPTURE,
+    tabId
+  }) as GetAllTabCaptureResponse | undefined;
+
+  if (!response?.ok) {
+    return { ok: false, features: [] };
   }
 
   return response;
@@ -192,7 +280,7 @@ function downloadCsv() {
   const link = document.createElement('a');
 
   link.href = downloadUrl;
-  link.download = shopRankFeature.getFileName(capture.value);
+  link.download = selectedFeature.value.getFileName(capture.value);
   link.click();
 
   window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
@@ -225,6 +313,15 @@ function formatRequestSeen(value: RequestSeen | null): string {
 <template>
   <main class="popup-page">
     <a-typography-title :level="4" class="popup-title">DY Capture</a-typography-title>
+
+    <!-- 数据类型下拉框：来自统一注册表，新增页面/接口提取功能会自动出现。 -->
+    <a-select
+      v-model:value="selectedFeatureId"
+      :options="featureOptions"
+      @change="onFeatureChange"
+      style="width: 100%; margin-bottom: 12px"
+    />
+
     <a-typography-paragraph class="popup-description">
       捕获{{ dataTypeName }}当前页接口响应，并导出 CSV。
     </a-typography-paragraph>
@@ -255,31 +352,35 @@ function formatRequestSeen(value: RequestSeen | null): string {
       </a-button>
     </div>
 
-    <!-- 诊断面板默认收起，只在排查捕获失败时展开查看，避免把技术细节暴露给普通用户。 -->
-    <a-collapse class="debug-collapse" :bordered="false" ghost :default-active-key="[]">
-      <a-collapse-panel key="debug" header="诊断信息">
-        <div class="summary-row">
-          <span class="summary-label">脚本就绪</span>
+    <!-- 诊断面板：开关控制显隐，默认收起，避免把技术细节暴露给普通用户。 -->
+    <div class="debug-section">
+      <div class="debug-toggle" @click="showDebug = !showDebug">
+        <span>调试信息</span>
+        <span class="debug-arrow" :class="{ expanded: showDebug }">▶</span>
+      </div>
+      <div v-if="showDebug" class="debug-panel">
+        <div class="debug-row">
+          <span class="debug-label">脚本就绪</span>
           <span>{{ formatBool(lastResponse?.bridgeReady) }}</span>
         </div>
-        <div class="summary-row">
-          <span class="summary-label">page 脚本就绪</span>
+        <div class="debug-row">
+          <span class="debug-label">page 脚本就绪</span>
           <span>{{ formatBool(lastResponse?.pageReady) }}</span>
         </div>
-        <div class="summary-row">
-          <span class="summary-label">fetch 已 patch</span>
+        <div class="debug-row">
+          <span class="debug-label">fetch 已 patch</span>
           <span>{{ formatBool(lastResponse?.fetchPatched) }}</span>
         </div>
-        <div class="summary-row">
-          <span class="summary-label">XHR 已 patch</span>
+        <div class="debug-row">
+          <span class="debug-label">XHR 已 patch</span>
           <span>{{ formatBool(lastResponse?.xhrPatched) }}</span>
         </div>
-        <div class="summary-row">
-          <span class="summary-label">接口请求</span>
-          <span>{{ requestSeenText }}</span>
+        <div class="debug-row debug-row-url">
+          <span class="debug-label">接口请求</span>
+          <span class="debug-value-url">{{ requestSeenText }}</span>
         </div>
-      </a-collapse-panel>
-    </a-collapse>
+      </div>
+    </div>
   </main>
 </template>
 
@@ -327,7 +428,64 @@ function formatRequestSeen(value: RequestSeen | null): string {
   margin-top: 16px;
 }
 
-.debug-collapse {
+/* 调试面板：开关 + 技术细节区域 */
+.debug-section {
   margin-top: 12px;
+}
+
+.debug-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  cursor: pointer;
+  color: #999999;
+  font-size: 13px;
+  user-select: none;
+  transition: color 0.2s;
+}
+
+.debug-toggle:hover {
+  color: #666666;
+}
+
+.debug-arrow {
+  display: inline-block;
+  font-size: 10px;
+  transition: transform 0.2s;
+}
+
+.debug-arrow.expanded {
+  transform: rotate(90deg);
+}
+
+.debug-panel {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.debug-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.debug-row + .debug-row {
+  margin-top: 4px;
+}
+
+.debug-label {
+  color: #888888;
+  flex-shrink: 0;
+}
+
+.debug-value-url {
+  text-align: right;
+  word-break: break-all;
+  color: #555555;
 }
 </style>

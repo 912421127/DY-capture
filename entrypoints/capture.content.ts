@@ -6,14 +6,12 @@ import {
     type PageReadyMessage,
     type ReportCaptureMessage
 } from '../src/shared/protocol';
-import { shopRankFeature } from '../src/features/shop-rank';
+import { findFeatureByApiUrl, getContentScriptMatches } from '../src/features';
 
-// 当前支持的数据类型。新增时把对应 feature 加进 FEATURES 即可，核心逻辑不用改。
-const FEATURES = [shopRankFeature];
-
+// 当前支持的数据类型都来自统一注册表 src/features。新增时改注册表即可，核心逻辑不用改。
 declare global {
     interface Window {
-        __DY_CAPTURE_SHOP_RANK_INSTALLED__?: boolean;
+        __DY_CAPTURE_INSTALLED__?: boolean;
         __dyCaptureRequestUrl?: string;
     }
     interface XMLHttpRequest {
@@ -22,7 +20,8 @@ declare global {
 }
 
 export default defineContentScript({
-    matches: ['https://compass.jinritemai.com/*'],
+    // 注入范围由所有 feature 的 hosts 推导，新增 feature 时自动覆盖其域名。
+    matches: getContentScriptMatches(),
     runAt: 'document_start',
     world: 'MAIN',
     // 罗盘接口请求可能发生在 iframe / 微前端 frame，需要在每个 frame 的主环境里 patch fetch/XHR。
@@ -30,11 +29,11 @@ export default defineContentScript({
     main () {
         // 粘性守卫：防止同一 frame 被重复注入（manifest + popup 兜底）导致 patch 叠层、重复捕获。
         // 框架覆盖 fetch 的场景由下面的 DOMContentLoaded 兜底重打处理，不靠去掉守卫。
-        if (window.__DY_CAPTURE_SHOP_RANK_INSTALLED__) {
+        if (window.__DY_CAPTURE_INSTALLED__) {
             return;
         }
 
-        window.__DY_CAPTURE_SHOP_RANK_INSTALLED__ = true;
+        window.__DY_CAPTURE_INSTALLED__ = true;
 
         // 通知 background：本 frame 的采集脚本已就绪。
         // Popup 据此判断脚本是否已注入，避免每次都重复兜底注入。
@@ -64,7 +63,7 @@ export default defineContentScript({
 });
 
 function findFeature (url: string) {
-    return FEATURES.find(feature => feature.matchUrl(url));
+    return findFeatureByApiUrl(url);
 }
 
 function patchFetch () {

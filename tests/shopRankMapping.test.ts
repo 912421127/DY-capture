@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { parseCompassShopRankRecords } from '../src/features/shop-rank/parse';
 
 const samplePath = '/Users/xyc/.codex/attachments/21d7d9da-7cda-4745-a085-fd0b11421dd2/pasted-text.txt';
+
+// 样本文件是 Mac 上的绝对路径，换机器后需替换为本机样本路径；
+// 文件不存在时跳过本测试，避免在不持有样本的环境里硬失败。
+if (!existsSync(samplePath)) {
+    console.warn(`跳过 shopRankMapping 测试：样本文件不存在（${samplePath}）。请替换为本地样本路径后再运行。`);
+    process.exit(0);
+}
+
 const sampleResponse = JSON.parse(readFileSync(samplePath, 'utf8'));
 const records = parseCompassShopRankRecords(sampleResponse);
 

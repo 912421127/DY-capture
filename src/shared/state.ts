@@ -41,8 +41,12 @@ function createCapture (rawCapture: RawCapture, parse: (rawResponse: unknown) =>
 }
 
 function parseUrl (url: string): URL | null {
+    // background 运行在 MV3 service worker，可能不存在 window，
+    // 用 typeof 兜底，避免解析带相对路径的 URL 时直接抛错。
+    const base = typeof window !== 'undefined' ? window.location.origin : undefined;
+
     try {
-        return new URL(url, window.location.origin);
+        return new URL(url, base);
     } catch {
         return null;
     }
