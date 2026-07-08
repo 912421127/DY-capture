@@ -1,4 +1,5 @@
 import type { Capture } from '../../shared/types';
+import { formatBeijingDateTime } from '../../shared/format';
 import type { CaptureFeature } from '../types';
 import { buildPageUrls, extractPageResult, mergeMultiPageResponses } from './pagination';
 import { isProductHotSaleRankUrl, parseCompassProductHotSaleRankRecords } from './parse';
@@ -21,6 +22,7 @@ export const productHotSaleRankFeature: CaptureFeature = {
     displayName: '罗盘商品热销榜',
     matchUrl: isProductHotSaleRankUrl,
     hosts: PRODUCT_HOT_SALE_RANK_HOSTS,
+    autoOpenUrl: 'https://compass.jinritemai.com/shop/chance/rank-product',
     matchPageUrl: matchProductHotSaleRankPage,
     parse: parseCompassProductHotSaleRankRecords,
     getFileName: getProductHotSaleRankFileName,
@@ -29,10 +31,10 @@ export const productHotSaleRankFeature: CaptureFeature = {
     mergePages: mergeMultiPageResponses
 };
 
-// 文件名形如「罗盘商品热销榜-page-3-2026-07-08T09-00-00.csv」。
+// 文件名使用北京时间，避免后台静默导出时受浏览器或系统时区影响。
 function getProductHotSaleRankFileName(capture: Capture): string {
     const pageText = capture.pageNo ? `page-${capture.pageNo}` : 'page-current';
-    const timeText = capture.capturedAt.replace(/[:.]/g, '-');
+    const timeText = formatBeijingDateTime(capture.capturedAt).replace(/:/g, '-');
 
     return `罗盘商品热销榜-${pageText}-${timeText}.csv`;
 }

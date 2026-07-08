@@ -26,3 +26,23 @@ export function formatCompactNumber (value: number): string {
 
     return formatPlainNumber(value, 0);
 }
+
+export function formatBeijingDateTime(value: Date | string): string {
+    const date = typeof value === 'string' ? new Date(value) : value;
+    const formatter = new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+    const parts = formatter.formatToParts(date);
+
+    // CSV 面向国内用户，导出时间固定用北京时间，避免浏览器所在时区导致时间看起来不一致。
+    const getPart = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value ?? '';
+
+    return `${getPart('year')}-${getPart('month')}-${getPart('day')} ${getPart('hour')}:${getPart('minute')}:${getPart('second')}`;
+}

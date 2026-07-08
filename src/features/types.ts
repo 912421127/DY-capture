@@ -18,6 +18,8 @@ export interface CaptureFeature {
     matchUrl: (url: string) => boolean;
     // 该数据类型所属域名（用于 content script 的注入范围与 Popup 的域名校验）。
     hosts: string[];
+    // 自动导出时后台打开的罗盘页面地址。
+    autoOpenUrl: string;
     // 判断某个「页面地址」是否属于本数据类型，Popup 据此自动匹配提取组件。
     matchPageUrl: (url: string) => boolean;
     // 把原始响应解析成 CSV 行（映射 + 格式化）。

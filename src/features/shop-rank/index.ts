@@ -1,4 +1,5 @@
 import type { Capture } from '../../shared/types';
+import { formatBeijingDateTime } from '../../shared/format';
 import type { CaptureFeature } from '../types';
 import { parseCompassShopRankRecords, isShopRankUrl } from './parse';
 import { extractPageResult, buildPageUrls, mergeMultiPageResponses } from './pagination';
@@ -23,6 +24,7 @@ export const shopRankFeature: CaptureFeature = {
     displayName: '罗盘店铺榜单',
     matchUrl: isShopRankUrl,
     hosts: SHOP_RANK_HOSTS,
+    autoOpenUrl: 'https://compass.jinritemai.com/shop/chance/rank-shop',
     matchPageUrl: matchShopRankPage,
     parse: parseCompassShopRankRecords,
     getFileName: getShopRankFileName,
@@ -31,10 +33,10 @@ export const shopRankFeature: CaptureFeature = {
     mergePages: mergeMultiPageResponses
 };
 
-// 文件名形如「罗盘店铺榜单-page-3-2026-07-08T09-00-00.csv」。
+// 文件名使用北京时间，避免后台静默导出时受浏览器或系统时区影响。
 function getShopRankFileName (capture: Capture): string {
     const pageText = capture.pageNo ? `page-${capture.pageNo}` : 'page-current';
-    const timeText = capture.capturedAt.replace(/[:.]/g, '-');
+    const timeText = formatBeijingDateTime(capture.capturedAt).replace(/:/g, '-');
 
     return `罗盘店铺榜单-${pageText}-${timeText}.csv`;
 }

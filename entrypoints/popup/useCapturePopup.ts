@@ -1,10 +1,21 @@
 import { computed, onMounted, ref } from 'vue';
 import { browser } from 'wxt/browser';
-import { createCsvContent } from '../../src/shared/csv';
 import { FEATURES, findFeatureByPageUrl } from '../../src/features';
-import { GET_ALL_TAB_CAPTURE, GET_TAB_CAPTURE, type GetAllTabCaptureResponse } from '../../src/shared/protocol';
-import { buildCaptureState } from '../../src/shared/state';
-import type { Capture, CaptureStateResponse, RawCapture, RequestSeen } from '../../src/shared/types';
+import {
+    GET_ALL_TAB_CAPTURE,
+    GET_AUTO_EXPORT_STATE,
+    GET_TAB_CAPTURE,
+    OPEN_AUTO_EXPORT_PAGES,
+    RUN_AUTO_EXPORT_ONCE,
+    SET_AUTO_EXPORT_SETTINGS,
+    type AutoExportStateResponse,
+    type GetAllTabCaptureResponse,
+    type OpenAutoExportPagesResponse,
+    type RunAutoExportOnceResponse
+} from '../../src/shared/protocol';
+import type { AutoExportStatus } from '../../src/shared/autoExport';
+import type { Capture, CaptureStateResponse, RequestSeen } from '../../src/shared/types';
+import { runCaptureExportJob } from '../../src/shared/exportJob';
 import { fetchPageResponseForExport } from './fetchAllPagesForExport';
 
 type NoticeType = 'success' | 'info' | 'warning' | 'error';
@@ -28,6 +39,11 @@ export function useCapturePopup() {
     const exportCurrentPage = ref(0);
     const exportTotalPages = ref(0);
     const exportDone = ref(false);
+    const autoExportEnabled = ref(false);
+    const autoExportLoading = ref(false);
+    const openingAutoExportPages = ref(false);
+    const testingAutoExport = ref(false);
+    const autoExportStatus = ref<AutoExportStatus | null>(null);
 
     const canDownload = computed(() => Boolean(capture.value?.url || lastResponse.value?.requestSeen?.url));
     const requestCapturedText = computed(() => canDownload.value ? '已捕获' : '未捕获');
@@ -44,16 +60,24 @@ export function useCapturePopup() {
         return '未开始';
     });
     const requestSeenText = computed(() => formatRequestSeen(lastResponse.value?.requestSeen ?? null));
+    const autoExportStatusText = computed(() => formatAutoExportStatus(autoExportStatus.value));
+    const nextAutoExportText = computed(() => formatDateTime(autoExportStatus.value?.nextRunAt ?? null));
+    // 只有全部采集页面都准备成功，才进入自动导出面板；部分失败时继续停留在打开入口。
+    const hasOpenedAutoExportPages = computed(() => autoExportStatus.value?.pagesReady === true);
+    const autoExportPageText = computed(() => formatAutoExportPages(autoExportStatus.value));
+    const autoExportResultText = computed(() => formatAutoExportResults(autoExportStatus.value));
 
     onMounted(async () => {
-        await autoSelectFeature();
-        await loadLatestCapture();
+        await loadAutoExportState();
     });
 
     function onFeatureChange() {
         capture.value = null;
         lastResponse.value = null;
         resetExportProgress();
+        if (autoExportEnabled.value) {
+            void saveAutoExportSettings(true);
+        }
         void loadLatestCapture();
     }
 
@@ -89,9 +113,11 @@ export function useCapturePopup() {
                 throw new Error('没有找到当前活动标签页。');
             }
 
+            const tabId = tab.id;
+
             assertFeatureTab(tab.url);
 
-            const response = await requestLatestCapture(tab.id);
+            const response = await requestLatestCapture(tabId);
             lastResponse.value = response;
 
             if (response.hasRawCapture) {
@@ -235,9 +261,11 @@ export function useCapturePopup() {
                 throw new Error('没有找到当前活动标签页。');
             }
 
+            const tabId = tab.id;
+
             assertFeatureTab(tab.url);
 
-            const response = await requestLatestCapture(tab.id);
+            const response = await requestLatestCapture(tabId);
             lastResponse.value = response;
 
             if (response.capture) {
@@ -253,62 +281,24 @@ export function useCapturePopup() {
             noticeType.value = 'info';
             noticeMessage.value = '正在导出 CSV，请稍等...';
 
-            const firstPageUrl = buildFirstPageUrl(seedUrl);
-            const firstPageResponse = await fetchPageResponseForExport(tab.id, firstPageUrl);
+            const result = await runCaptureExportJob({
+                feature: selectedFeature.value,
+                seedUrl,
+                fetchPage: url => fetchPageResponseForExport(tabId, url),
+                onProgress: updateExportProgress
+            });
 
-            if (firstPageResponse === undefined || firstPageResponse === null) {
-                throw new Error('接口没有返回有效分页数据，请刷新罗盘页面后重试。');
-            }
-
-            const allResponses: unknown[] = [firstPageResponse];
-            const pageResult = selectedFeature.value.extractPageResult(firstPageResponse);
-            const totalPages = pageResult && pageResult.total > pageResult.pageSize
-                ? Math.ceil(pageResult.total / pageResult.pageSize)
-                : 1;
-
-            updateExportProgress(1, totalPages);
-
-            if (totalPages > 1) {
-                const remainingUrls = selectedFeature.value.buildPageUrls(firstPageUrl, totalPages);
-
-                for (let index = 0; index < remainingUrls.length; index += 1) {
-                    await sleep(500);
-                    allResponses.push(await fetchPageResponseForExport(tab.id, remainingUrls[index]));
-                    updateExportProgress(index + 2, totalPages);
-                }
-            }
-
-            const mergedResponse = selectedFeature.value.mergePages(allResponses);
-            const rawCapture: RawCapture = {
-                url: firstPageUrl,
-                capturedAt: new Date().toISOString(),
-                rawResponse: mergedResponse
-            };
-            const state = buildCaptureState(rawCapture, selectedFeature.value.parse);
-
-            if (!state.capture || state.capture.records.length === 0) {
-                throw new Error(state.error || '已获取接口响应，但没有解析出可导出的列表数据。');
-            }
-
-            capture.value = state.capture;
-            downloadCaptureCsv(state.capture);
+            capture.value = result.capture;
+            downloadCaptureCsv(result.csvContent, result.fileName);
             exportDone.value = true;
             noticeType.value = 'success';
-            noticeMessage.value = `导出完成，共 ${state.capture.records.length} 条记录。`;
+            noticeMessage.value = `导出完成，共 ${result.capture.records.length} 条记录。`;
         } catch (error) {
             noticeType.value = 'warning';
             noticeMessage.value = getFriendlyErrorMessage(error);
         } finally {
             exporting.value = false;
         }
-    }
-
-    function buildFirstPageUrl(seedUrl: string): string {
-        const url = new URL(seedUrl);
-        // 当前导出固定按 ZIPPO 关键词查询。后续如果要支持用户输入，只需要把这里的固定值改成表单值。这里先注释，暂时不需要
-        // url.searchParams.set('query_condition', 'ZIPPO');
-        url.searchParams.set('page_no', '1');
-        return url.toString();
     }
 
     function resetExportProgress() {
@@ -323,21 +313,132 @@ export function useCapturePopup() {
         noticeMessage.value = `正在导出 CSV：第 ${currentPage}/${totalPages} 页。`;
     }
 
-    function sleep(ms: number): Promise<void> {
-        return new Promise(resolve => window.setTimeout(resolve, ms));
-    }
-
-    function downloadCaptureCsv(nextCapture: Capture) {
-        const csvContent = createCsvContent(nextCapture.records);
+    function downloadCaptureCsv(csvContent: string, fileName: string) {
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
         const downloadUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
 
         link.href = downloadUrl;
-        link.download = selectedFeature.value.getFileName(nextCapture);
+        link.download = fileName;
         link.click();
 
         window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    }
+
+    async function loadAutoExportState() {
+        const response = (await browser.runtime.sendMessage({
+            type: GET_AUTO_EXPORT_STATE
+        })) as AutoExportStateResponse | undefined;
+
+        if (!response?.ok) {
+            return;
+        }
+
+        autoExportEnabled.value = response.settings.enabled;
+        autoExportStatus.value = response.status;
+    }
+
+    async function onAutoExportChange(checked: boolean) {
+        await saveAutoExportSettings(checked);
+    }
+
+    async function saveAutoExportSettings(enabled: boolean) {
+        autoExportLoading.value = true;
+
+        try {
+            const response = (await browser.runtime.sendMessage({
+                type: SET_AUTO_EXPORT_SETTINGS,
+                settings: {
+                    enabled
+                }
+            })) as AutoExportStateResponse | undefined;
+
+            if (!response?.ok) {
+                throw new Error(response?.error || '保存自动导出设置失败。');
+            }
+
+            autoExportEnabled.value = response.settings.enabled;
+            autoExportStatus.value = response.status;
+            noticeType.value = 'success';
+            noticeMessage.value = response.settings.enabled ? '自动导出已开启，每 1 小时执行一次。' : '自动导出已关闭。';
+        } catch (error) {
+            autoExportEnabled.value = !enabled;
+            noticeType.value = 'warning';
+            noticeMessage.value = getFriendlyErrorMessage(error);
+        } finally {
+            autoExportLoading.value = false;
+        }
+    }
+
+    async function openAutoExportPages() {
+        if (openingAutoExportPages.value) {
+            return;
+        }
+
+        openingAutoExportPages.value = true;
+
+        try {
+            noticeType.value = 'info';
+            noticeMessage.value = '正在打开采集页面，请稍等...';
+
+            const response = (await browser.runtime.sendMessage({
+                type: OPEN_AUTO_EXPORT_PAGES
+            })) as OpenAutoExportPagesResponse | undefined;
+
+            if (!response) {
+                throw new Error('后台没有返回打开页面结果。');
+            }
+
+            autoExportStatus.value = response.status;
+
+            if (!response.ok) {
+                throw new Error(response.error || '部分采集页面打开失败。');
+            }
+
+            noticeType.value = 'success';
+            // noticeMessage.value = '采集页面已打开，可以开启自动导出或点击手动导出。';
+            noticeMessage.value = '采集页面已打开，可以点击手动导出。';
+        } catch (error) {
+            noticeType.value = 'warning';
+            noticeMessage.value = getFriendlyErrorMessage(error);
+        } finally {
+            openingAutoExportPages.value = false;
+        }
+    }
+
+    async function testAutoExport() {
+        if (testingAutoExport.value) {
+            return;
+        }
+
+        testingAutoExport.value = true;
+
+        try {
+            noticeType.value = 'info';
+            noticeMessage.value = '正在手动导出，请稍等...';
+
+            const response = (await browser.runtime.sendMessage({
+                type: RUN_AUTO_EXPORT_ONCE
+            })) as RunAutoExportOnceResponse | undefined;
+
+            if (!response) {
+                throw new Error('后台没有返回手动导出结果。');
+            }
+
+            autoExportStatus.value = response.status;
+
+            if (!response.ok) {
+                throw new Error(response.error || '手动导出失败。');
+            }
+
+            noticeType.value = 'success';
+            noticeMessage.value = '手动导出完成，CSV 已开始下载。';
+        } catch (error) {
+            noticeType.value = 'warning';
+            noticeMessage.value = getFriendlyErrorMessage(error);
+        } finally {
+            testingAutoExport.value = false;
+        }
     }
 
     function getFriendlyErrorMessage(error: unknown): string {
@@ -363,6 +464,59 @@ export function useCapturePopup() {
         return `${time}（${value.url}）`;
     }
 
+    function formatAutoExportStatus(status: AutoExportStatus | null): string {
+        if (!status) {
+            return '未开启';
+        }
+
+        if (status.running) {
+            return '正在导出';
+        }
+
+        if (status.lastError) {
+            return `失败：${status.lastError}`;
+        }
+
+        if (status.lastSuccessAt) {
+            return `成功：${formatDateTime(status.lastSuccessAt)}`;
+        }
+
+        return autoExportEnabled.value ? '等待首次执行' : '未开启';
+    }
+
+    function formatAutoExportPages(status: AutoExportStatus | null): string {
+        if (!status?.pageResults.length) {
+            return '尚未打开';
+        }
+
+        const readyCount = status.pageResults.filter(result => result.ok).length;
+
+        return `已准备 ${readyCount}/${status.pageResults.length} 个页面`;
+    }
+
+    function formatAutoExportResults(status: AutoExportStatus | null): string {
+        if (!status?.featureResults.length) {
+            return '尚未测试';
+        }
+
+        const successCount = status.featureResults.filter(result => result.ok).length;
+        const failedResults = status.featureResults.filter(result => !result.ok);
+
+        if (failedResults.length === 0) {
+            return `成功 ${successCount}/${status.featureResults.length} 个`;
+        }
+
+        return `成功 ${successCount}/${status.featureResults.length} 个；${failedResults.map(result => `${result.displayName}失败`).join('、')}`;
+    }
+
+    function formatDateTime(value: string | null): string {
+        if (!value) {
+            return '-';
+        }
+
+        return new Date(value).toLocaleString('zh-CN');
+    }
+
     return {
         selectedFeatureId,
         featureOptions,
@@ -379,8 +533,20 @@ export function useCapturePopup() {
         requestCapturedText,
         csvReadyText,
         requestSeenText,
+        autoExportEnabled,
+        autoExportLoading,
+        openingAutoExportPages,
+        testingAutoExport,
+        hasOpenedAutoExportPages,
+        autoExportPageText,
+        autoExportResultText,
+        autoExportStatusText,
+        nextAutoExportText,
         loadLatestCapture,
         downloadCsv,
+        openAutoExportPages,
+        onAutoExportChange,
+        testAutoExport,
         onFeatureChange,
         formatBool
     };

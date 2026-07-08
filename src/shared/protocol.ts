@@ -1,4 +1,5 @@
 import type { CaptureStateResponse, CaptureType, PageReadyPayload, RawCapture } from './types';
+import type { AutoExportSettings, AutoExportStatus } from './autoExport';
 
 // 消息类型常量（按职责区分，不再绑定具体数据类型）。
 export const BRIDGE_READY = 'DY_CAPTURE_BRIDGE_READY';
@@ -7,6 +8,10 @@ export const REPORT_CAPTURE = 'DY_CAPTURE_REPORT_CAPTURE';
 export const GET_TAB_CAPTURE = 'DY_CAPTURE_GET_TAB_CAPTURE';
 // Popup 一次性查询当前 tab 下所有数据类型的捕获状态（用于自动匹配的"已抓数据兜底"与下拉展示）。
 export const GET_ALL_TAB_CAPTURE = 'DY_CAPTURE_GET_ALL_TAB_CAPTURE';
+export const GET_AUTO_EXPORT_STATE = 'DY_CAPTURE_GET_AUTO_EXPORT_STATE';
+export const SET_AUTO_EXPORT_SETTINGS = 'DY_CAPTURE_SET_AUTO_EXPORT_SETTINGS';
+export const OPEN_AUTO_EXPORT_PAGES = 'DY_CAPTURE_OPEN_AUTO_EXPORT_PAGES';
+export const RUN_AUTO_EXPORT_ONCE = 'DY_CAPTURE_RUN_AUTO_EXPORT_ONCE';
 
 // bridge 安装完成后通知 background，Popup 据此判断是否需要兜底注入脚本。
 export interface BridgeReadyMessage {
@@ -97,4 +102,61 @@ export function isGetAllTabCapture (value: unknown): value is GetAllTabCaptureMe
 
     const message = value as Partial<GetAllTabCaptureMessage>;
     return message.type === GET_ALL_TAB_CAPTURE && typeof message.tabId === 'number';
+}
+
+export interface AutoExportStateResponse {
+    ok: boolean;
+    settings: AutoExportSettings;
+    status: AutoExportStatus;
+    error?: string;
+}
+
+export interface GetAutoExportStateMessage {
+    type: typeof GET_AUTO_EXPORT_STATE;
+}
+
+export interface SetAutoExportSettingsMessage {
+    type: typeof SET_AUTO_EXPORT_SETTINGS;
+    settings: AutoExportSettings;
+}
+
+export interface OpenAutoExportPagesMessage {
+    type: typeof OPEN_AUTO_EXPORT_PAGES;
+}
+
+export interface OpenAutoExportPagesResponse {
+    ok: boolean;
+    status: AutoExportStatus;
+    error?: string;
+}
+
+export interface RunAutoExportOnceMessage {
+    type: typeof RUN_AUTO_EXPORT_ONCE;
+}
+
+export interface RunAutoExportOnceResponse {
+    ok: boolean;
+    status: AutoExportStatus;
+    error?: string;
+}
+
+export function isGetAutoExportState(value: unknown): value is GetAutoExportStateMessage {
+    return Boolean(value) && typeof value === 'object' && (value as { type?: string }).type === GET_AUTO_EXPORT_STATE;
+}
+
+export function isSetAutoExportSettings(value: unknown): value is SetAutoExportSettingsMessage {
+    if (!value || typeof value !== 'object') {
+        return false;
+    }
+
+    const message = value as Partial<SetAutoExportSettingsMessage>;
+    return message.type === SET_AUTO_EXPORT_SETTINGS && Boolean(message.settings);
+}
+
+export function isOpenAutoExportPages(value: unknown): value is OpenAutoExportPagesMessage {
+    return Boolean(value) && typeof value === 'object' && (value as { type?: string }).type === OPEN_AUTO_EXPORT_PAGES;
+}
+
+export function isRunAutoExportOnce(value: unknown): value is RunAutoExportOnceMessage {
+    return Boolean(value) && typeof value === 'object' && (value as { type?: string }).type === RUN_AUTO_EXPORT_ONCE;
 }
