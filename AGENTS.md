@@ -59,6 +59,20 @@ DO NOT send optional commentary
 - 如果没有运行某个检查，要明确说明原因。
 - 如果发现已有代码有乱码、历史遗留问题或潜在风险，可以提醒用户，但不要顺手大改无关内容。
 
+## Agent skills
+
+### Issue tracker
+
+Issues live as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
 Think Before Coding
 Don't assume. Don't hide confusion. Surface tradeoffs.
 Before implementing:
