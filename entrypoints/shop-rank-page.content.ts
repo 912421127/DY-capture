@@ -1,0 +1,172 @@
+import { isShopRankUrl, PAGE_READY, SHOP_RANK_CAPTURE_SOURCE, SHOP_RANK_CAPTURED, type PageReadyMessage, type ShopRankCapturedMessage } from '../src/shared/shopRank';
+
+declare global {
+    interface Window {
+        __DY_CAPTURE_SHOP_RANK_INSTALLED__?: boolean;
+    }
+}
+
+export default defineContentScript({
+    matches: ['https://compass.jinritemai.com/*'],
+    runAt: 'document_start',
+    world: 'MAIN',
+    // 罗盘接口请求可能发生在 iframe / 微前端 frame，需要在每个 frame 的主环境里 patch fetch/XHR。
+    allFrames: true,
+    main () {
+        // 粘性守卫：防止同一 frame 被重复注入（manifest + popup 兜底）导致 patch 叠层、重复捕获。
+        // 框架覆盖 fetch 的场景由下面的 DOMContentLoaded 兜底重打处理，不靠去掉守卫。
+        if (window.__DY_CAPTURE_SHOP_RANK_INSTALLED__) {
+            return;
+        }
+
+        window.__DY_CAPTURE_SHOP_RANK_INSTALLED__ = true;
+        patchFetch();
+        patchXhr();
+
+        // 自检 fetch/XHR 是否真的被 patch。如果被框架反向覆盖，这里会反映成 false。
+        emitPageReady();
+
+        // 框架可能在 document_start 之后覆盖 window.fetch，导致我们的 patch 失效。
+        // 在 DOMContentLoaded 再检查一次，被覆盖了就重打 fetch（XHR 不重打，避免 loadend 监听叠加）。
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                if (isFetchPatched()) {
+                    return;
+                }
+
+                console.warn('[DY Capture] 检测到 window.fetch 被覆盖，重新打补丁');
+                patchFetch();
+                emitPageReady();
+            }, { once: true });
+        }
+    }
+});
+
+function patchFetch () {
+    const originalFetch = window.fetch;
+
+    window.fetch = async function patchedFetch (input: RequestInfo | URL, init?: RequestInit) {
+        const response = await originalFetch.call(this, input, init);
+        const url = getFetchUrl(input);
+
+        if (url && isShopRankUrl(url)) {
+            // clone 后读取响应，不影响罗盘页面自己的业务代码继续消费原 response。
+            response
+                .clone()
+                .json()
+                .then(rawResponse => emitCapture(url, rawResponse))
+                .catch(error => console.warn('[DY Capture] 读取 shop_rank fetch 响应失败', url, error));
+        }
+
+        return response;
+    };
+}
+
+function patchXhr () {
+    const originalOpen = XMLHttpRequest.prototype.open;
+    const originalSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function patchedOpen (this: XMLHttpRequest, method: string, url: string | URL, async?: boolean, username?: string | null, password?: string | null) {
+        // XHR 的 URL 在 open 阶段才能拿到，先挂到实例上，send/loadend 时再解析响应。
+        this.__dyCaptureRequestUrl = String(url);
+        return originalOpen.call(this, method, url, async ?? true, username ?? null, password ?? null);
+    } as XMLHttpRequest['open'];
+
+    XMLHttpRequest.prototype.send = function patchedSend (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
+        const requestUrl = this.__dyCaptureRequestUrl;
+
+        if (requestUrl && isShopRankUrl(requestUrl)) {
+            this.addEventListener('loadend', () => {
+                const rawResponse = parseXhrResponse(this);
+
+                if (rawResponse !== null) {
+                    emitCapture(requestUrl, rawResponse);
+                } else {
+                    console.warn('[DY Capture] 无法解析 shop_rank XHR 响应', requestUrl);
+                }
+            });
+        }
+
+        return originalSend.call(this, body);
+    };
+}
+
+function isFetchPatched (): boolean {
+    // patch 后 window.fetch 是我们的包装函数，toString 不再含 'native code'。
+    return !String(window.fetch).includes('native code');
+}
+
+function isXhrPatched (): boolean {
+    return !String(XMLHttpRequest.prototype.open).includes('native code');
+}
+
+function emitPageReady () {
+    const message: PageReadyMessage = {
+        source: SHOP_RANK_CAPTURE_SOURCE,
+        type: PAGE_READY,
+        payload: {
+            fetchPatched: isFetchPatched(),
+            xhrPatched: isXhrPatched(),
+            origin: window.location.origin,
+            frameUrl: window.location.href
+        }
+    };
+
+    // 用 '*' 兜底 targetOrigin：MAIN→ISOLATED 同 frame 通信，避免 origin 判定异常导致消息被丢弃。
+    window.postMessage(message, '*');
+}
+
+function getFetchUrl (input: RequestInfo | URL): string | null {
+    if (typeof input === 'string') {
+        return input;
+    }
+
+    if (input instanceof URL) {
+        return input.toString();
+    }
+
+    if (input instanceof Request) {
+        return input.url;
+    }
+
+    return null;
+}
+
+function parseXhrResponse (xhr: XMLHttpRequest): unknown | null {
+    try {
+        if (xhr.responseType === 'json') {
+            return xhr.response;
+        }
+
+        if (xhr.responseType === '' || xhr.responseType === 'text') {
+            return JSON.parse(xhr.responseText);
+        }
+    } catch (error) {
+        console.warn('[DY Capture] 解析 XHR 响应 JSON 失败', error);
+        return null;
+    }
+
+    return null;
+}
+
+function emitCapture (url: string, rawResponse: unknown) {
+    // 主环境只转发页面已经收到的原始响应，不做字段解析。
+    // 解析逻辑放在 bridge 隔离环境里，避免真实响应结构变化时影响接口捕获链路。
+    const message: ShopRankCapturedMessage = {
+        source: SHOP_RANK_CAPTURE_SOURCE,
+        type: SHOP_RANK_CAPTURED,
+        payload: {
+            url,
+            capturedAt: new Date().toISOString(),
+            rawResponse
+        }
+    };
+
+    window.postMessage(message, '*');
+}
+
+declare global {
+    interface XMLHttpRequest {
+        __dyCaptureRequestUrl?: string;
+    }
+}
