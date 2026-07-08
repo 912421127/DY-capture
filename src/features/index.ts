@@ -1,4 +1,5 @@
 import { shopRankFeature } from './shop-rank';
+import { productHotSaleRankFeature } from './product-hot-sale-rank';
 import type { CaptureFeature } from './types';
 
 // 重新导出类型，方便 background / popup 统一从注册表入口引入。
@@ -11,7 +12,7 @@ export type { CaptureFeature } from './types';
 // - popup 用它生成下拉选项和导出文件名。
 // 新增数据类型时，只需在 src/features/ 下加一个 feature 并 push 进 FEATURES，
 // background / content script / popup 都从这里取，核心逻辑与 UI 都不用改。
-export const FEATURES: CaptureFeature[] = [shopRankFeature];
+export const FEATURES: CaptureFeature[] = [shopRankFeature, productHotSaleRankFeature];
 
 // 按 API 请求 URL 匹配（content script 拦截、webRequest 诊断用）。
 export function findFeatureByApiUrl(url: string): CaptureFeature | undefined {
@@ -30,10 +31,15 @@ export function findFeatureByPageUrl(pageUrl: string): CaptureFeature | undefine
 
 // 由所有 feature 的 hosts 生成 content script 的注入范围（matches）。
 export function getContentScriptMatches(): string[] {
-    return FEATURES.flatMap(feature => feature.hosts.map(host => `https://${host}/*`));
+    return uniqueValues(FEATURES.flatMap(feature => feature.hosts.map(host => `https://${host}/*`)));
 }
 
 // 生成 manifest 的 host_permissions，供 wxt.config.ts 复用，避免与注册表脱节。
 export function getHostPermissions(): string[] {
-    return FEATURES.flatMap(feature => feature.hosts.map(host => `https://${host}/*`));
+    return uniqueValues(FEATURES.flatMap(feature => feature.hosts.map(host => `https://${host}/*`)));
+}
+
+function uniqueValues(values: string[]): string[] {
+    // 多个 feature 可能共用同一个罗盘域名，这里去重后再写入 manifest / matches。
+    return Array.from(new Set(values));
 }

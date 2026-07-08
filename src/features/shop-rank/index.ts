@@ -6,11 +6,12 @@ import { extractPageResult, buildPageUrls, mergeMultiPageResponses } from './pag
 // 店铺榜单所属域名，用于 content script 的注入范围与 Popup 的域名校验。
 const SHOP_RANK_HOSTS = ['compass.jinritemai.com'];
 
-// 按页面地址粗匹配：当前只有一个 feature，先按整个罗盘域名匹配；
-// 后续新增页面时再细化成具体的页面路径规则。
+// 店铺榜单页面路径，避免商品热销榜页面误选中店铺榜单。
 function matchShopRankPage(url: string): boolean {
     try {
-        return SHOP_RANK_HOSTS.includes(new URL(url).hostname);
+        const parsedUrl = new URL(url);
+
+        return SHOP_RANK_HOSTS.includes(parsedUrl.hostname) && parsedUrl.pathname === '/shop/chance/rank-shop';
     } catch {
         return false;
     }
