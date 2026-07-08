@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseCompassShopRankRecords } from '../src/shared/shopRank';
+import { parseCompassShopRankRecords } from '../src/features/shop-rank/parse';
 
 const samplePath = '/Users/xyc/.codex/attachments/21d7d9da-7cda-4745-a085-fd0b11421dd2/pasted-text.txt';
 const sampleResponse = JSON.parse(readFileSync(samplePath, 'utf8'));

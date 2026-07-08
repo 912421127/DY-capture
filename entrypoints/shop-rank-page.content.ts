@@ -1,8 +1,22 @@
-import { isShopRankUrl, PAGE_READY, SHOP_RANK_CAPTURE_SOURCE, SHOP_RANK_CAPTURED, type PageReadyMessage, type ShopRankCapturedMessage } from '../src/shared/shopRank';
+import {
+    CAPTURE_SOURCE,
+    CAPTURED,
+    PAGE_READY,
+    type CapturedMessage,
+    type PageReadyMessage
+} from '../src/shared/protocol';
+import { shopRankFeature } from '../src/features/shop-rank';
+
+// 当前支持的数据类型。新增时把对应 feature 加进 FEATURES 即可，核心逻辑不用改。
+const FEATURES = [shopRankFeature];
 
 declare global {
     interface Window {
         __DY_CAPTURE_SHOP_RANK_INSTALLED__?: boolean;
+        __dyCaptureRequestUrl?: string;
+    }
+    interface XMLHttpRequest {
+        __dyCaptureRequestUrl?: string;
     }
 }
 
@@ -42,6 +56,10 @@ export default defineContentScript({
     }
 });
 
+function findFeature (url: string) {
+    return FEATURES.find(feature => feature.matchUrl(url));
+}
+
 function patchFetch () {
     const originalFetch = window.fetch;
 
@@ -49,13 +67,18 @@ function patchFetch () {
         const response = await originalFetch.call(this, input, init);
         const url = getFetchUrl(input);
 
-        if (url && isShopRankUrl(url)) {
+        // 找到匹配的数据类型才拦截，避免误捕获非目标接口。
+        const feature = url ? findFeature(url) : undefined;
+
+        if (feature && url) {
             // clone 后读取响应，不影响罗盘页面自己的业务代码继续消费原 response。
+            // 用 const 锁定 url 的字符串类型，避免闭包里类型收窄丢失。
+            const capturedUrl = url;
             response
                 .clone()
                 .json()
-                .then(rawResponse => emitCapture(url, rawResponse))
-                .catch(error => console.warn('[DY Capture] 读取 shop_rank fetch 响应失败', url, error));
+                .then(rawResponse => emitCapture(feature.id, capturedUrl, rawResponse))
+                .catch(error => console.warn('[DY Capture] 读取响应失败', capturedUrl, error));
         }
 
         return response;
@@ -75,14 +98,19 @@ function patchXhr () {
     XMLHttpRequest.prototype.send = function patchedSend (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
         const requestUrl = this.__dyCaptureRequestUrl;
 
-        if (requestUrl && isShopRankUrl(requestUrl)) {
+        // 找到匹配的数据类型才拦截。
+        const feature = requestUrl ? findFeature(requestUrl) : undefined;
+
+        if (feature && requestUrl) {
+            // 用 const 锁定字符串类型，避免 loadend 回调里类型收窄丢失。
+            const capturedUrl = requestUrl;
             this.addEventListener('loadend', () => {
                 const rawResponse = parseXhrResponse(this);
 
                 if (rawResponse !== null) {
-                    emitCapture(requestUrl, rawResponse);
+                    emitCapture(feature.id, capturedUrl, rawResponse);
                 } else {
-                    console.warn('[DY Capture] 无法解析 shop_rank XHR 响应', requestUrl);
+                    console.warn('[DY Capture] 无法解析 XHR 响应', capturedUrl);
                 }
             });
         }
@@ -102,7 +130,7 @@ function isXhrPatched (): boolean {
 
 function emitPageReady () {
     const message: PageReadyMessage = {
-        source: SHOP_RANK_CAPTURE_SOURCE,
+        source: CAPTURE_SOURCE,
         type: PAGE_READY,
         payload: {
             fetchPatched: isFetchPatched(),
@@ -149,12 +177,13 @@ function parseXhrResponse (xhr: XMLHttpRequest): unknown | null {
     return null;
 }
 
-function emitCapture (url: string, rawResponse: unknown) {
+function emitCapture (captureType: string, url: string, rawResponse: unknown) {
     // 主环境只转发页面已经收到的原始响应，不做字段解析。
     // 解析逻辑放在 bridge 隔离环境里，避免真实响应结构变化时影响接口捕获链路。
-    const message: ShopRankCapturedMessage = {
-        source: SHOP_RANK_CAPTURE_SOURCE,
-        type: SHOP_RANK_CAPTURED,
+    const message: CapturedMessage = {
+        source: CAPTURE_SOURCE,
+        type: CAPTURED,
+        captureType,
         payload: {
             url,
             capturedAt: new Date().toISOString(),
@@ -163,10 +192,4 @@ function emitCapture (url: string, rawResponse: unknown) {
     };
 
     window.postMessage(message, '*');
-}
-
-declare global {
-    interface XMLHttpRequest {
-        __dyCaptureRequestUrl?: string;
-    }
 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { buildShopRankCaptureState } from '../src/shared/shopRank';
+import { buildCaptureState } from '../src/shared/state';
+import { parseCompassShopRankRecords } from '../src/features/shop-rank/parse';
 
 const rawCapture = {
     url: 'https://compass.jinritemai.com/compass_api/shop/mall/market/shop_rank?page_no=1&page_size=20',
@@ -17,10 +18,12 @@ const rawCapture = {
     }
 };
 
-const state = buildShopRankCaptureState(rawCapture);
+// 调用通用的捕获状态构建逻辑，并传入店铺榜单的解析函数（模拟 background 按数据类型解析）。
+const state = buildCaptureState(rawCapture, parseCompassShopRankRecords);
 
 assert.equal(state.hasRawCapture, true);
 assert.equal(state.capture, null);
-assert.match(state.error ?? '', /解析店铺榜单响应失败/);
+// 解析失败时应当兜底返回错误提示，而不是让异常冒泡到 UI。
+assert.match(state.error ?? '', /解析响应失败/);
 
 console.log('shop rank capture state ok');

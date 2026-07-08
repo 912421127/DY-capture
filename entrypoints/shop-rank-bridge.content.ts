@@ -1,14 +1,11 @@
 import { browser } from 'wxt/browser';
 import {
     BRIDGE_READY,
+    isCaptured,
+    isPageReady,
     PAGE_READY,
-    REPORT_SHOP_RANK_CAPTURE,
-    SHOP_RANK_CAPTURE_SOURCE,
-    SHOP_RANK_CAPTURED,
-    type PageReadyMessage,
-    type RawShopRankCapture,
-    type ShopRankCapturedMessage
-} from '../src/shared/shopRank';
+    REPORT_CAPTURE
+} from '../src/shared/protocol';
 
 declare global {
     interface Window {
@@ -39,39 +36,22 @@ export default defineContentScript({
             // 这里只靠消息形状（source/type/payload）判别，足以过滤无关消息。
             const data = event.data as unknown;
 
-            if (isPageReadyMessage(data)) {
+            if (isPageReady(data)) {
+                // page 脚本完成 fetch/XHR patch 后通知 bridge，bridge 转发给 background。
                 void browser.runtime.sendMessage({ type: PAGE_READY, payload: data.payload })
                     .catch(error => console.warn('[DY Capture] 上报 PAGE_READY 失败', error));
                 return;
             }
 
-            if (isCapturedMessage(data)) {
-                // bridge 运行在隔离环境，把原始响应统一上报给 background 保存。
+            if (isCaptured(data)) {
+                // bridge 运行在隔离环境，把原始响应（带数据类型）统一上报给 background 保存。
                 // 子 frame 的捕获也会走到这里，Popup 只问 background 就能拿到整个 tab 的结果。
-                const payload: RawShopRankCapture = data.payload;
-                void browser.runtime.sendMessage({ type: REPORT_SHOP_RANK_CAPTURE, payload })
-                    .catch(error => console.warn('[DY Capture] 上报 REPORT_SHOP_RANK_CAPTURE 失败', error));
+                void browser.runtime.sendMessage({
+                    type: REPORT_CAPTURE,
+                    captureType: data.captureType,
+                    payload: data.payload
+                }).catch(error => console.warn('[DY Capture] 上报 REPORT_CAPTURE 失败', error));
             }
         });
     }
 });
-
-function isPageReadyMessage (value: unknown): value is PageReadyMessage {
-    if (!value || typeof value !== 'object') {
-        return false;
-    }
-
-    const message = value as Partial<PageReadyMessage>;
-
-    return message.source === SHOP_RANK_CAPTURE_SOURCE && message.type === PAGE_READY && Boolean(message.payload);
-}
-
-function isCapturedMessage (value: unknown): value is ShopRankCapturedMessage {
-    if (!value || typeof value !== 'object') {
-        return false;
-    }
-
-    const message = value as Partial<ShopRankCapturedMessage>;
-
-    return message.source === SHOP_RANK_CAPTURE_SOURCE && message.type === SHOP_RANK_CAPTURED && Boolean(message.payload);
-}
