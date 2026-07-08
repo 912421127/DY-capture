@@ -1,10 +1,14 @@
-import type { CaptureFeature } from './shop-rank';
 import { shopRankFeature } from './shop-rank';
+import type { CaptureFeature } from './types';
 
 // 重新导出类型，方便 background / popup 统一从注册表入口引入。
-export type { CaptureFeature } from './shop-rank';
+export type { CaptureFeature } from './types';
 
 // 统一 feature 注册表：所有可捕获的数据类型（页面 + 接口）都集中登记在这里。
+// 新手可以把它理解成“功能菜单”：
+// - content script 用它判断哪个接口需要捕获；
+// - background 用它按数据类型保存 / 查询状态；
+// - popup 用它生成下拉选项和导出文件名。
 // 新增数据类型时，只需在 src/features/ 下加一个 feature 并 push 进 FEATURES，
 // background / content script / popup 都从这里取，核心逻辑与 UI 都不用改。
 export const FEATURES: CaptureFeature[] = [shopRankFeature];

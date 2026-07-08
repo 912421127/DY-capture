@@ -6,4 +6,3 @@ export const captureKey = (captureType: CaptureType, tabId: number) => `capture:
 export const bridgeReadyKey = (tabId: number) => `bridgeReady:${tabId}`;
 export const pageReadyKey = (tabId: number) => `pageReady:${tabId}`;
 export const requestSeenKey = (tabId: number) => `requestSeen:${tabId}`;
-export const captureProgressKey = (tabId: number) => `captureProgress:${tabId}`;

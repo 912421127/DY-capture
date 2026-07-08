@@ -39,13 +39,6 @@ export interface RequestSeen {
     at: string;
 }
 
-// 多页获取进度，供 Popup 显示「正在获取第 X/N 页...」。
-export interface CaptureProgress {
-    currentPage: number;
-    totalPages: number;
-    status: string;
-}
-
 // 返回给 Popup 的捕获状态（解析 / 错误提示由具体 feature 的解析逻辑决定）。
 export interface CaptureStateResponse {
     ok: boolean;
@@ -59,6 +52,5 @@ export interface CaptureStateResponse {
     xhrPatched?: boolean;
     // background 是否探测到请求被发起（用于区分请求走了 SW/Worker）。
     requestSeen?: RequestSeen | null;
-    captureProgress?: CaptureProgress | null;
     error?: string;
 }

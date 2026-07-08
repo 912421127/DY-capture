@@ -28,6 +28,7 @@ export function extractPageResult (rawResponse: unknown): ShopRankPageResult | n
 /**
  * 根据第一页 URL 生成剩余页的 URL 列表（第 2 页到最后一页）。
  * 只修改 URL 中 page_no 查询参数，其余参数保持不变。
+ * 因为 query_condition=ZIPPO 会先写到第一页 URL 里，所以这里生成第 2 页、第 3 页时会自动带上它。
  */
 export function buildPageUrls (firstPageUrl: string, totalPages: number): string[] {
     const urls: string[] = [];
@@ -45,6 +46,7 @@ export function buildPageUrls (firstPageUrl: string, totalPages: number): string
  * 合并多个分页的 rawResponse 为单个 rawResponse。
  * 深拷贝第一页的整体响应结构，然后把各页 compass_general_table_value.data 的行拼接在一起。
  * 合并后的响应结构与单页响应完全一致，现有的解析逻辑无需改动。
+ * 这样做的好处是：解析 CSV 的代码不用关心“单页还是多页”，它只处理一份看起来像第一页的响应。
  */
 export function mergeMultiPageResponses (responses: unknown[]): unknown {
     if (responses.length === 0) {

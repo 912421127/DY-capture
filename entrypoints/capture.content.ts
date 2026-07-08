@@ -8,6 +8,9 @@ import {
 } from '../src/shared/protocol';
 import { findFeatureByApiUrl, getContentScriptMatches } from '../src/features';
 
+// 这个文件运行在罗盘网页的 MAIN world 里。
+// 它的职责很单纯：盯住页面真实发出的 fetch / XHR 请求，发现目标接口后，
+// 把“接口 URL + 原始响应”交给 background 保存。它不解析字段，也不导出文件。
 // 当前支持的数据类型都来自统一注册表 src/features。新增时改注册表即可，核心逻辑不用改。
 declare global {
     interface Window {
@@ -73,7 +76,7 @@ function patchFetch () {
         const response = await originalFetch.call(this, input, init);
         const url = getFetchUrl(input);
 
-        // 找到匹配的数据类型才拦截，避免误捕获非目标接口。
+        // 只处理 feature 注册表里认识的接口，避免把罗盘页面的其它请求也保存下来。
         const feature = url ? findFeature(url) : undefined;
 
         if (feature && url) {
@@ -186,7 +189,7 @@ function parseXhrResponse (xhr: XMLHttpRequest): unknown | null {
 
 function emitCapture (captureType: string, url: string, rawResponse: unknown) {
     // 主环境只转发页面已经收到的原始响应，不做字段解析。
-    // 解析逻辑放在 background 里，避免真实响应结构变化时影响接口捕获链路。
+    // 字段映射和 CSV 导出放在 popup / feature 里做，这样接口结构变化时更容易定位是哪一步坏了。
     const message: ReportCaptureMessage = {
         type: REPORT_CAPTURE,
         captureType,
