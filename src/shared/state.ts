@@ -2,7 +2,7 @@ import type { Capture, CaptureStateResponse, JsonRecord, RawCapture } from './ty
 import { findRecordList } from './parse';
 
 // 把捕获状态构建逻辑抽成通用版本：原始响应交由具体 feature 的解析函数处理。
-// 这样 background、bridge 的解析行为与错误提示保持一致，新增数据类型只需传入不同的 parser。
+// 这样 background 的解析行为与错误提示保持一致，新增数据类型只需传入不同的 parser。
 export function buildCaptureState (
     rawCapture: RawCapture | null,
     parse: (rawResponse: unknown) => JsonRecord[] | null

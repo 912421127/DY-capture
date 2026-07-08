@@ -1,9 +1,10 @@
+import { browser } from 'wxt/browser';
 import {
-    CAPTURE_SOURCE,
-    CAPTURED,
+    BRIDGE_READY,
     PAGE_READY,
-    type CapturedMessage,
-    type PageReadyMessage
+    REPORT_CAPTURE,
+    type PageReadyMessage,
+    type ReportCaptureMessage
 } from '../src/shared/protocol';
 import { shopRankFeature } from '../src/features/shop-rank';
 
@@ -34,6 +35,12 @@ export default defineContentScript({
         }
 
         window.__DY_CAPTURE_SHOP_RANK_INSTALLED__ = true;
+
+        // 通知 background：本 frame 的采集脚本已就绪。
+        // Popup 据此判断脚本是否已注入，避免每次都重复兜底注入。
+        void browser.runtime.sendMessage({ type: BRIDGE_READY })
+            .catch(error => console.warn('[DY Capture] 上报 BRIDGE_READY 失败', error));
+
         patchFetch();
         patchXhr();
 
@@ -130,7 +137,6 @@ function isXhrPatched (): boolean {
 
 function emitPageReady () {
     const message: PageReadyMessage = {
-        source: CAPTURE_SOURCE,
         type: PAGE_READY,
         payload: {
             fetchPatched: isFetchPatched(),
@@ -140,8 +146,10 @@ function emitPageReady () {
         }
     };
 
-    // 用 '*' 兜底 targetOrigin：MAIN→ISOLATED 同 frame 通信，避免 origin 判定异常导致消息被丢弃。
-    window.postMessage(message, '*');
+    // 直接上报 background（page 脚本运行在 MAIN world，runtime.sendMessage 仍可用）。
+    // 不再经 window.postMessage 跨 world 中转，少一层转发。
+    void browser.runtime.sendMessage(message)
+        .catch(error => console.warn('[DY Capture] 上报 PAGE_READY 失败', error));
 }
 
 function getFetchUrl (input: RequestInfo | URL): string | null {
@@ -179,10 +187,9 @@ function parseXhrResponse (xhr: XMLHttpRequest): unknown | null {
 
 function emitCapture (captureType: string, url: string, rawResponse: unknown) {
     // 主环境只转发页面已经收到的原始响应，不做字段解析。
-    // 解析逻辑放在 bridge 隔离环境里，避免真实响应结构变化时影响接口捕获链路。
-    const message: CapturedMessage = {
-        source: CAPTURE_SOURCE,
-        type: CAPTURED,
+    // 解析逻辑放在 background 里，避免真实响应结构变化时影响接口捕获链路。
+    const message: ReportCaptureMessage = {
+        type: REPORT_CAPTURE,
         captureType,
         payload: {
             url,
@@ -191,5 +198,6 @@ function emitCapture (captureType: string, url: string, rawResponse: unknown) {
         }
     };
 
-    window.postMessage(message, '*');
+    void browser.runtime.sendMessage(message)
+        .catch(error => console.warn('[DY Capture] 上报 REPORT_CAPTURE 失败', error));
 }

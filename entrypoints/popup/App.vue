@@ -12,7 +12,6 @@ const COMPASS_HOST = 'compass.jinritemai.com';
 // WXT 的 PublicPath 类型只校验带开头 / 的形式（见 .wxt/types/paths.d.ts），
 // Chrome 运行时对带不带 / 都能解析，这里沿用类型安全的写法。
 // 关键修复是 allFrames: true，让兜底注入覆盖所有 frame。
-const BRIDGE_SCRIPT_FILE = '/content-scripts/shop-rank-bridge.js';
 const PAGE_SCRIPT_FILE = '/content-scripts/shop-rank-page.js';
 
 // 当前弹窗对应的数据类型（后续加数据时可切换为其它 feature）。
@@ -143,21 +142,16 @@ async function requestLatestCapture(tabId: number): Promise<CaptureStateResponse
 }
 
 async function ensureCaptureScriptsInjected(tabId: number): Promise<number> {
-  // bridge 先注入隔离环境，负责接收主页面的 postMessage 并上报 background。
-  const bridgeResults = await browser.scripting.executeScript({
-    target: { tabId, allFrames: true },
-    files: [BRIDGE_SCRIPT_FILE]
-  });
-
   // 接口请求由页面自己的 JS 发起，只有 MAIN world 才能 patch 到页面真实的 fetch/XHR。
-  await browser.scripting.executeScript({
+  // page 脚本安装后会直接上报 background，无需独立的 bridge 中转。
+  const results = await browser.scripting.executeScript({
     target: { tabId, allFrames: true },
     files: [PAGE_SCRIPT_FILE],
     world: 'MAIN'
   });
 
   // executeScript 返回每个 frame 的注入结果，数组长度即命中的 frame 数。
-  return bridgeResults.length;
+  return results.length;
 }
 
 function updateNoticeByResponse(response: CaptureStateResponse) {
@@ -265,7 +259,7 @@ function formatRequestSeen(value: RequestSeen | null): string {
     <a-collapse class="debug-collapse" :bordered="false" ghost :default-active-key="[]">
       <a-collapse-panel key="debug" header="诊断信息">
         <div class="summary-row">
-          <span class="summary-label">bridge 就绪</span>
+          <span class="summary-label">脚本就绪</span>
           <span>{{ formatBool(lastResponse?.bridgeReady) }}</span>
         </div>
         <div class="summary-row">
