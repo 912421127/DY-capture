@@ -1,4 +1,5 @@
 {
+  // 继承 WXT 生成的 tsconfig 基线（含路径别名、DOM / WebWorker 类型等），这里只额外开启 strict 严格模式。
   "extends": "./.wxt/tsconfig.json",
   "compilerOptions": {
     "strict": true

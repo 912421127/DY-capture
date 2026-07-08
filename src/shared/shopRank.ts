@@ -205,6 +205,7 @@ export function createCsvContent(records: JsonRecord[]): string {
     return ['\uFEFF' + headers.join(','), ...rows].join('\n');
 }
 
+// 把罗盘单元格的 index_values 结构格式化成展示文本：存在上下限时拼成「下限-上限」，否则取当前值。
 export function formatIndexCell(fieldName: string, cell: CompassCell | undefined): string {
     const indexValues = cell?.index_values;
 
@@ -309,6 +310,7 @@ function getPath(value: unknown, path: string[]): unknown {
     return current;
 }
 
+// 把排名变化值格式化为带箭头的文本：上升用 ↑、下降用 ↓，无变化显示 0。
 function formatRankChange(value: number | undefined): string {
     if (value === undefined) {
         return '';
@@ -351,6 +353,7 @@ function formatIndexValue(fieldName: string, item: IndexValueItem): string {
     return formatCompactNumber(rawValue);
 }
 
+// 大数压缩展示：超过一万用「万」作单位（保留两位），否则按整数展示。
 function formatCompactNumber(value: number): string {
     if (Math.abs(value) >= 10000) {
         return `${formatPlainNumber(value / 10000, 2)}万`;
@@ -359,12 +362,14 @@ function formatCompactNumber(value: number): string {
     return formatPlainNumber(value, 0);
 }
 
+// 按中文千分位格式输出数字，并限制最大小数位数。
 function formatPlainNumber(value: number, maxFractionDigits: number): string {
     return value.toLocaleString('zh-CN', {
         maximumFractionDigits: maxFractionDigits
     });
 }
 
+// 把整数（含 undefined）格式化为中文千分位字符串，缺失时返回空串。
 function formatInteger(value: number | undefined): string {
     if (value === undefined) {
         return '';
@@ -375,6 +380,7 @@ function formatInteger(value: number | undefined): string {
     });
 }
 
+// 统一把未知错误转换成可读字符串（Error 取 message，其余转 String）。
 function getErrorMessage(error: unknown): string {
     if (error instanceof Error) {
         return error.message;
@@ -392,6 +398,7 @@ function getNumberParam(url: URL | null, name: string): number | null {
     return Number.isFinite(value) ? value : null;
 }
 
+// 按常见列表字段名优先在对象中查找第一组对象数组；找不到再递归子字段继续找。
 function findListByPreferredField(value: unknown): JsonRecord[] | null {
     if (!isPlainObject(value)) {
         return null;
@@ -416,6 +423,7 @@ function findListByPreferredField(value: unknown): JsonRecord[] | null {
     return null;
 }
 
+// 兜底策略：递归扫描整个响应，返回遇到的第一组非空对象数组作为候选列表数据。
 function findFirstObjectArray(value: unknown): JsonRecord[] | null {
     if (isRecordArray(value)) {
         return value;
@@ -438,14 +446,17 @@ function findFirstObjectArray(value: unknown): JsonRecord[] | null {
     return null;
 }
 
+// 判断是否为「非空且每个元素都是普通对象」的数组，用于识别候选列表数据。
 function isRecordArray(value: unknown): value is JsonRecord[] {
     return Array.isArray(value) && value.length > 0 && value.every(isPlainObject);
 }
 
+// 判断是否为普通对象（非 null、非数组），用于安全地按字段名访问。
 function isPlainObject(value: unknown): value is JsonRecord {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// 收集所有记录中出现过的字段名（去重、保序），作为 CSV 表头。
 function collectHeaders(records: JsonRecord[]): string[] {
     const headers = new Set<string>();
 
