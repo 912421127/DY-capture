@@ -31,6 +31,8 @@ export interface AutoExportStatus {
     pagesReady: boolean;
     pageResults: AutoExportPageResult[];
     featureResults: AutoExportFeatureResult[];
+    /** featureId → 最后一次成功导出的 seed URL，持久化兜底用 */
+    lastSeedUrl: Record<string, string>;
     lastRunAt: string | null;
     lastSuccessAt: string | null;
     lastError: string | null;
@@ -49,6 +51,7 @@ export function createDefaultAutoExportStatus(): AutoExportStatus {
         pagesReady: false,
         pageResults: [],
         featureResults: [],
+        lastSeedUrl: {},
         lastRunAt: null,
         lastSuccessAt: null,
         lastError: null,
@@ -88,6 +91,7 @@ export function normalizeAutoExportStatus(value: unknown): AutoExportStatus {
         pagesReady: status.pagesReady === true,
         pageResults: normalizePageResults(status.pageResults),
         featureResults: normalizeFeatureResults(status.featureResults),
+        lastSeedUrl: typeof status.lastSeedUrl === 'object' && status.lastSeedUrl !== null ? status.lastSeedUrl : {},
         lastRunAt: typeof status.lastRunAt === 'string' ? status.lastRunAt : null,
         lastSuccessAt: typeof status.lastSuccessAt === 'string' ? status.lastSuccessAt : null,
         lastError: typeof status.lastError === 'string' ? status.lastError : null,

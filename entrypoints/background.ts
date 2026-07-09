@@ -360,18 +360,48 @@ export default defineBackground(() => {
     }
 
     async function waitForSeedUrl(feature: CaptureFeature, tabId: number): Promise<string> {
+        // 优先从 session storage 拿（实时捕获的数据）。
+        const entry = await store.getFeatureEntry(feature.id, tabId);
+        const sessionSeedUrl = entry.rawCapture?.url || entry.requestSeen?.url;
+
+        if (sessionSeedUrl && feature.matchUrl(sessionSeedUrl)) {
+            return await persistSeedUrl(feature.id, sessionSeedUrl);
+        }
+
+        // 兜底：从 storage.local 读取上一次成功导出的 seed URL。
+        const status = await getAutoExportStatus();
+        const lastSeedUrl = status.lastSeedUrl[feature.id];
+
+        if (lastSeedUrl && feature.matchUrl(lastSeedUrl)) {
+            return lastSeedUrl;
+        }
+
+        // 都拿不到时轮询等待，最多 30 秒。
         for (let index = 0; index < 30; index += 1) {
-            const entry = await store.getFeatureEntry(feature.id, tabId);
-            const seedUrl = entry.rawCapture?.url || entry.requestSeen?.url;
-
-            if (seedUrl && feature.matchUrl(seedUrl)) {
-                return seedUrl;
-            }
-
             await sleep(1000);
+
+            const polled = await store.getFeatureEntry(feature.id, tabId);
+            const polledSeedUrl = polled.rawCapture?.url || polled.requestSeen?.url;
+
+            if (polledSeedUrl && feature.matchUrl(polledSeedUrl)) {
+                return await persistSeedUrl(feature.id, polledSeedUrl);
+            }
         }
 
         throw new Error(`还没有获取到${feature.displayName}接口参数。请确认已登录罗盘，或打开对应页面触发一次筛选后再试。`);
+    }
+
+    async function persistSeedUrl(featureId: string, seedUrl: string): Promise<string> {
+        const status = await getAutoExportStatus();
+
+        if (status.lastSeedUrl[featureId] !== seedUrl) {
+            await saveAutoExportStatus({
+                ...status,
+                lastSeedUrl: { ...status.lastSeedUrl, [featureId]: seedUrl }
+            });
+        }
+
+        return seedUrl;
     }
 
     async function ensureCaptureScriptsInjected(tabId: number): Promise<void> {

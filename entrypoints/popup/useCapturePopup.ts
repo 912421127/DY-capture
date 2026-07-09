@@ -336,6 +336,15 @@ export function useCapturePopup() {
 
         autoExportEnabled.value = response.settings.enabled;
         autoExportStatus.value = response.status;
+
+        // 如果 session 中没有实时捕获数据，但 storage.local 有持久化的 seed URL，
+        // 提示用户可以直接手动导出，不需要重新触发页面请求。
+        const hasPersistentSeed = Boolean(response.status.lastSeedUrl[selectedFeatureId.value]);
+
+        if (hasPersistentSeed && !lastResponse.value?.requestSeen) {
+            noticeType.value = 'info';
+            noticeMessage.value = '已有上次导出的接口记录，可以点击手动导出。';
+        }
     }
 
     async function onAutoExportChange(checked: boolean) {

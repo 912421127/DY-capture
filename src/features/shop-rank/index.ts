@@ -26,6 +26,7 @@ export const shopRankFeature: CaptureFeature = {
     hosts: SHOP_RANK_HOSTS,
     autoOpenUrl: 'https://compass.jinritemai.com/shop/chance/rank-shop',
     matchPageUrl: matchShopRankPage,
+    fixedQueryParams: { query_condition: 'ZIPPO' },
     parse: parseCompassShopRankRecords,
     getFileName: getShopRankFileName,
     extractPageResult,

@@ -22,6 +22,8 @@ export interface CaptureFeature {
     autoOpenUrl: string;
     // 判断某个「页面地址」是否属于本数据类型，Popup 据此自动匹配提取组件。
     matchPageUrl: (url: string) => boolean;
+    // 每次请求时附加的固定 URL 查询参数（如筛选条件），自动加到所有分页 URL 上。
+    fixedQueryParams?: Record<string, string>;
     // 把原始响应解析成 CSV 行（映射 + 格式化）。
     parse: (rawResponse: unknown) => JsonRecord[] | null;
     // 根据捕获生成下载文件名。

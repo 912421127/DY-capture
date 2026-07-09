@@ -20,7 +20,7 @@ export interface CaptureExportJobResult {
 }
 
 export async function runCaptureExportJob(options: CaptureExportJobOptions): Promise<CaptureExportJobResult> {
-    const firstPageUrl = buildFirstPageUrl(options.seedUrl);
+    const firstPageUrl = buildFirstPageUrl(options.seedUrl, options.feature.fixedQueryParams);
     const firstPageResponse = await options.fetchPage(firstPageUrl);
 
     if (firstPageResponse === undefined || firstPageResponse === null) {
@@ -65,10 +65,19 @@ export async function runCaptureExportJob(options: CaptureExportJobOptions): Pro
     };
 }
 
-export function buildFirstPageUrl(seedUrl: string): string {
+// 把 seed URL 转化成第一页 URL（固定 page_no=1，同时附加 feature 的固定查询参数）。
+// fixedQueryParams 会被 buildPageUrls 继承（它在 firstPageUrl 基础上改 page_no），保证所有分页 URL 都带上筛选条件。
+export function buildFirstPageUrl(seedUrl: string, fixedQueryParams?: Record<string, string>): string {
     const url = new URL(seedUrl);
 
     url.searchParams.set('page_no', '1');
+
+    if (fixedQueryParams) {
+        for (const [key, value] of Object.entries(fixedQueryParams)) {
+            url.searchParams.set(key, value);
+        }
+    }
+
     return url.toString();
 }
 
