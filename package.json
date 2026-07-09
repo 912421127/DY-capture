@@ -7,6 +7,7 @@
     "dev": "wxt",
     "build": "wxt build",
     "compile": "vue-tsc --noEmit",
+    "test": "vite-node tests/featureRegistry.test.ts && vite-node tests/shopRankCaptureState.test.ts && vite-node tests/shopRankMapping.test.ts",
     "zip": "wxt zip",
     "postinstall": "wxt prepare"
   },

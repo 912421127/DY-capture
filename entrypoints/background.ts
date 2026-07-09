@@ -40,6 +40,7 @@ import {
 } from '../src/shared/autoExport';
 import { runCaptureExportJob } from '../src/shared/exportJob';
 import { runAutoExportFeatures } from '../src/shared/multiExport';
+import { fetchPageInsideCompassPage } from '../src/shared/fetchPage';
 
 const PAGE_SCRIPT_FILE = '/content-scripts/capture.js';
 
@@ -484,13 +485,4 @@ export default defineBackground(() => {
     }
 });
 
-// 注意：这个函数会被 Chrome 复制到网页里执行，必须保持自包含。
-async function fetchPageInsideCompassPage(url: string): Promise<unknown> {
-    const response = await fetch(url, { credentials: 'include' });
 
-    if (!response.ok) {
-        throw new Error(`接口请求失败：HTTP ${response.status}。请刷新罗盘页面或重新登录后再试。`);
-    }
-
-    return response.json();
-}
